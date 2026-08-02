@@ -1343,7 +1343,10 @@ mod tests {
             decode_frame_batcher,
         };
         let sampling = SamplingConfig::default();
-        let prompt_token_ids = [1];
+        // A multi-token prompt takes the whole-prompt prefill path. Keep this
+        // above one token so the test exercises a fresh runtime session before
+        // prefill.
+        let prompt_token_ids = [1, 2];
         let ids = OpenAiGenerationIds::new(OpenAiCacheHints::default());
         let mut emitted = Vec::new();
         backend.generate_local_tokens(
