@@ -39,12 +39,23 @@ pub(super) struct LocalGenerationReceiptFinalization<'a> {
     pub(super) model_generation_elapsed: Option<Duration>,
 }
 
+fn ensure_request_active(
+    cancellation: Option<&openai_frontend::CancellationToken>,
+) -> OpenAiResult<()> {
+    if cancellation.is_some_and(openai_frontend::CancellationToken::is_cancelled) {
+        Err(OpenAiError::backend("request cancelled"))
+    } else {
+        Ok(())
+    }
+}
+
 impl StageOpenAiBackend {
     pub(super) fn generate_local_tokens(
         &self,
         request: LocalGeneration<'_>,
         mut on_token: impl FnMut(i32) -> OpenAiResult<TokenControl>,
     ) -> OpenAiResult<GenerationCacheStats> {
+        ensure_request_active(request.cancellation)?;
         let session_id = request.ids.session_label.clone();
         let receipt_request_id = request.ids.request_id;
         let receipt_session_id = request.ids.session_id;
@@ -105,6 +116,7 @@ impl StageOpenAiBackend {
                 false
             };
             if can_sample_whole_prompt_in_prefill {
+                ensure_request_active(request.cancellation)?;
                 if let Some(metadata) = request.chat_sampling_metadata {
                     let mut runtime = self
                         .runtime
@@ -138,6 +150,7 @@ impl StageOpenAiBackend {
                         None,
                     )
                     .map_err(openai_backend_error)?;
+                ensure_request_active(request.cancellation)?;
                 prompt_prefill_sample = Some(predicted);
                 cache_stats.suffix_prefill_tokens = saturating_u32(request.prompt_token_ids.len());
                 let runtime_sessions_after = runtime.session_stats();
@@ -177,6 +190,7 @@ impl StageOpenAiBackend {
                 cache_stats.prompt_ms = prefill_timer.elapsed_ms();
                 self.emit_openai_phase("stage.openai_prefill", prefill_timer, attrs);
             } else if request.prompt_token_ids.len() > 1 {
+                ensure_request_active(request.cancellation)?;
                 let prefill_timer = PhaseTimer::start();
                 let prefill_tokens =
                     &request.prompt_token_ids[..request.prompt_token_ids.len() - 1];
@@ -347,9 +361,18 @@ impl StageOpenAiBackend {
                 let mut decoded_prefill_suffix = false;
                 if restored_prefill_tokens < prefill_tokens.len() {
                     decoded_prefill_suffix = true;
-                    runtime
-                        .prefill(&session_id, &prefill_tokens[restored_prefill_tokens..])
-                        .map_err(openai_backend_error)?;
+                    let suffix = &prefill_tokens[restored_prefill_tokens..];
+                    let batch_size = runtime
+                        .session_batch_size(&session_id)
+                        .map_err(openai_backend_error)?
+                        .max(1);
+                    for chunk in suffix.chunks(batch_size) {
+                        ensure_request_active(request.cancellation)?;
+                        runtime
+                            .prefill(&session_id, chunk)
+                            .map_err(openai_backend_error)?;
+                    }
+                    ensure_request_active(request.cancellation)?;
                 }
                 cache_stats.matched_prefix_tokens = saturating_u32(restored_prefill_tokens);
                 cache_stats.suffix_prefill_tokens =
@@ -632,6 +655,7 @@ impl StageOpenAiBackend {
                 if let Some(config) = self.linear_proposal_ingress.as_ref()
                     && linear_proposals_enabled
                 {
+                    ensure_request_active(request.cancellation)?;
                     let remaining_new_tokens =
                         (request.max_tokens as usize).saturating_sub(decoded_tokens);
                     // Prefill leaves the final prompt token undecoded. When whole-prompt
@@ -685,6 +709,7 @@ impl StageOpenAiBackend {
                         LinearProposalQueryOutcome::Ready(queried) => Some(queried),
                     };
                     if let Some(queried) = queried {
+                        ensure_request_active(request.cancellation)?;
                         let decision_id = queried.proposal.decision_id.clone();
                         let receipt = execute_linear_proposal_with_terminal_discard(
                             config,
@@ -702,6 +727,7 @@ impl StageOpenAiBackend {
                                         prompt_token_count: request.prompt_token_ids.len(),
                                     },
                                     queried,
+                                    request.cancellation,
                                     &mut emit_token,
                                 )
                             },
