@@ -278,16 +278,37 @@ pub(super) fn chat_template_options(
     request: &ChatCompletionRequest,
     defaults: &EmbeddedOpenAiRequestDefaults,
 ) -> OpenAiResult<ChatTemplateOptions> {
-    let reasoning = openai_frontend::normalize_reasoning_template_options(
+    let mut reasoning = openai_frontend::normalize_reasoning_template_options(
         request.reasoning.as_ref(),
         request.reasoning_effort,
         &request.extra,
     )?;
+    if reasoning.enable_thinking.is_none() {
+        reasoning.enable_thinking = default_reasoning_enabled(defaults);
+    }
     Ok(ChatTemplateOptions {
         reasoning_format: Some(chat_reasoning_format(defaults.reasoning_format)),
         enable_thinking: reasoning.enable_thinking,
         ..ChatTemplateOptions::default()
     })
+}
+
+fn default_reasoning_enabled(defaults: &EmbeddedOpenAiRequestDefaults) -> Option<bool> {
+    match defaults.reasoning_enabled {
+        Some(crate::frontend::EmbeddedReasoningEnabled::Disabled) => Some(false),
+        Some(crate::frontend::EmbeddedReasoningEnabled::Enabled) => Some(true),
+        Some(crate::frontend::EmbeddedReasoningEnabled::Auto) | None => {
+            match defaults.reasoning_budget {
+                Some(crate::frontend::EmbeddedReasoningBudget::Tokens(0)) => Some(false),
+                Some(crate::frontend::EmbeddedReasoningBudget::Tokens(_)) => Some(true),
+                Some(crate::frontend::EmbeddedReasoningBudget::Effort(
+                    openai_frontend::ReasoningEffort::None,
+                )) => Some(false),
+                Some(crate::frontend::EmbeddedReasoningBudget::Effort(_)) => Some(true),
+                Some(crate::frontend::EmbeddedReasoningBudget::Auto) | None => None,
+            }
+        }
+    }
 }
 
 fn chat_reasoning_format(value: Option<EmbeddedReasoningFormat>) -> ChatReasoningFormat {

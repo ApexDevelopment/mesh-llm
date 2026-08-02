@@ -152,7 +152,7 @@ fn request_defaults_fill_omitted_chat_fields_only() {
     assert_eq!(sampling.penalty_last_n, 64);
     assert_eq!(sampling.logit_bias.len(), 2);
     let template_options = chat_template_options(&request, &test_request_defaults()).unwrap();
-    assert_eq!(template_options.enable_thinking, None);
+    assert_eq!(template_options.enable_thinking, Some(true));
     assert_eq!(
         template_options.reasoning_format,
         Some(ChatReasoningFormat::Hidden)
@@ -343,6 +343,87 @@ fn chat_template_options_default_to_hidden_reasoning_parser() {
 
     assert_eq!(options.enable_thinking, None);
     assert_eq!(options.reasoning_format, Some(ChatReasoningFormat::Hidden));
+}
+
+#[test]
+fn request_default_reasoning_enabled_controls_omitted_request_value() {
+    let request: ChatCompletionRequest = serde_json::from_value(json!({
+        "model": "jc-builds/SmolLM2-135M-Instruct-Q4_K_M-GGUF:Q4_K_M",
+        "messages": [{"role": "user", "content": "hello"}]
+    }))
+    .unwrap();
+    let disabled = EmbeddedOpenAiRequestDefaults {
+        reasoning_enabled: Some(EmbeddedReasoningEnabled::Disabled),
+        ..EmbeddedOpenAiRequestDefaults::default()
+    };
+    let enabled = EmbeddedOpenAiRequestDefaults {
+        reasoning_enabled: Some(EmbeddedReasoningEnabled::Enabled),
+        ..EmbeddedOpenAiRequestDefaults::default()
+    };
+
+    assert_eq!(
+        chat_template_options(&request, &disabled)
+            .unwrap()
+            .enable_thinking,
+        Some(false)
+    );
+    assert_eq!(
+        chat_template_options(&request, &enabled)
+            .unwrap()
+            .enable_thinking,
+        Some(true)
+    );
+}
+
+#[test]
+fn explicit_request_reasoning_overrides_disabled_request_default() {
+    let request: ChatCompletionRequest = serde_json::from_value(json!({
+        "model": "jc-builds/SmolLM2-135M-Instruct-Q4_K_M-GGUF:Q4_K_M",
+        "messages": [{"role": "user", "content": "hello"}],
+        "reasoning": {"enabled": true}
+    }))
+    .unwrap();
+    let defaults = EmbeddedOpenAiRequestDefaults {
+        reasoning_enabled: Some(EmbeddedReasoningEnabled::Disabled),
+        ..EmbeddedOpenAiRequestDefaults::default()
+    };
+
+    assert_eq!(
+        chat_template_options(&request, &defaults)
+            .unwrap()
+            .enable_thinking,
+        Some(true)
+    );
+}
+
+#[test]
+fn request_default_reasoning_budget_controls_omitted_request_value() {
+    let request: ChatCompletionRequest = serde_json::from_value(json!({
+        "model": "jc-builds/SmolLM2-135M-Instruct-Q4_K_M-GGUF:Q4_K_M",
+        "messages": [{"role": "user", "content": "hello"}]
+    }))
+    .unwrap();
+    let disabled = EmbeddedOpenAiRequestDefaults {
+        reasoning_budget: Some(EmbeddedReasoningBudget::Tokens(0)),
+        ..EmbeddedOpenAiRequestDefaults::default()
+    };
+    let enabled = EmbeddedOpenAiRequestDefaults {
+        reasoning_budget: Some(EmbeddedReasoningBudget::Tokens(256)),
+        ..EmbeddedOpenAiRequestDefaults::default()
+    };
+
+    assert_eq!(
+        chat_template_options(&request, &disabled)
+            .unwrap()
+            .enable_thinking,
+        Some(false)
+    );
+    assert_eq!(
+        chat_template_options(&request, &enabled)
+            .unwrap()
+            .enable_thinking,
+        Some(true)
+    );
 }
 
 #[test]
